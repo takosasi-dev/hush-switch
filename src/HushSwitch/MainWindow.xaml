@@ -1,0 +1,57 @@
+<!-- メインウィンドウ(§9.1)。上から エラー帯 / まとめトグル / 対象一覧 / 追加ボタン / 知らせ の順に並べる。 -->
+<Window x:Class="HushSwitch.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="HushSwitch" Width="400" Height="480" MinWidth="340" MinHeight="300">
+    <DockPanel Margin="12">
+        <Border x:Name="ErrorBand" DockPanel.Dock="Top" Visibility="Collapsed"
+                Background="#C42B1C" CornerRadius="4" Padding="10,6" Margin="0,0,0,8">
+            <TextBlock x:Name="ErrorText" Foreground="White" TextWrapping="Wrap" />
+        </Border>
+
+        <Button x:Name="AllButton" DockPanel.Dock="Top" Content="すべてミュート" Click="OnToggleAll"
+                AutomationProperties.AutomationId="all" IsEnabled="False"
+                HorizontalAlignment="Stretch" Padding="0,8" Margin="0,0,0,8" />
+
+        <TextBlock x:Name="Notice" DockPanel.Dock="Bottom" Visibility="Collapsed"
+                   AutomationProperties.AutomationId="notice" TextWrapping="Wrap" Margin="0,8,0,0" />
+
+        <Button x:Name="AddButton" DockPanel.Dock="Bottom" Content="アプリを追加…" Click="OnAdd"
+                AutomationProperties.AutomationId="add" IsEnabled="False"
+                HorizontalAlignment="Stretch" Padding="0,6" Margin="0,8,0,0" />
+
+        <Grid>
+            <TextBlock x:Name="Placeholder" Text="読み込み中…" Opacity="0.7"
+                       AutomationProperties.AutomationId="placeholder"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <ItemsControl x:Name="List">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Exe}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding Status}" Opacity="0.7"
+                                               AutomationProperties.AutomationId="{Binding Exe, StringFormat='status:{0}'}" />
+                                    <TextBlock Text="一部のセッションを操作できませんでした" Foreground="#C42B1C" TextWrapping="Wrap"
+                                               Visibility="{Binding WriteFailed, Converter={StaticResource BoolToVisibility}}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="{Binding ButtonText}" Click="OnToggle"
+                                        AutomationProperties.AutomationId="{Binding Exe, StringFormat='toggle:{0}'}"
+                                        MinWidth="88" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                <Button Grid.Column="2" Content="削除" Click="OnRemove"
+                                        AutomationProperties.AutomationId="{Binding Exe, StringFormat='remove:{0}'}"
+                                        Margin="6,0,0,0" VerticalAlignment="Center" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Grid>
+    </DockPanel>
+</Window>

@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/HushSwitch.Core/HushSwitch.Core.csproj" />
+    <Project Path="src/HushSwitch/HushSwitch.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/HushSwitch.Tests/HushSwitch.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/HushSwitch.Probe/HushSwitch.Probe.csproj" />
+  </Folder>
+</Solution>
