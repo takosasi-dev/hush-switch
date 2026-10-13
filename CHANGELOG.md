@@ -2,6 +2,14 @@
 
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/)、版の付け方は [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [0.2.0] - 2026-10-14
+
+### Added
+
+- ミュート予約中のアプリが鳴り始めたとき、Windows からの通知を受けてすぐミュートする(これまでは 1 秒ごとの確認だけ)
+- 操作のログ(`%LOCALAPPDATA%\HushSwitch\logs\`。1 行 1 件の JSON、5 MB で次のファイル、14 日で削除)
+- オーディオサービスに接続できないときの表示と、1 秒ごとの再接続(実際にサービスを止めた状態では未確認)
+
 ## [0.1.0] - 2026-10-14
 
 最初の公開版です。

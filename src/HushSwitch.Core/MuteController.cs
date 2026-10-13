@@ -1,6 +1,8 @@
 // 対象ごとのミュート意図(Intent)を持ち、§9.4 の状態規則(表示・トグル・Intent の更新)を当てはめる。
 // 表示は毎回、読み直したセッションの状態から作る(INV-8)。登録された対象のセッションにしか書かない(INV-10)。
 // スレッドの面倒は見ない。呼ぶ側が1本のスレッドから直列に呼ぶこと(D-11)。
+using System.Diagnostics;
+
 namespace HushSwitch;
 
 /// <summary>§9.4 の表示状態。順に ミュート中 / 一部ミュート / ミュートなし / ミュート予約中 / 音を出していません。</summary>
@@ -19,26 +21,37 @@ public sealed record TargetState(string Exe, Display Display, bool WriteFailed)
 /// <summary>画面に出す1回ぶんの状態。Apps は今セッションを持つ exe 名(追加ダイアログ用)。</summary>
 public sealed record Snapshot(IReadOnlyList<TargetState> Targets, IReadOnlyList<string> Apps);
 
-public sealed class MuteController(IAudioSessions audio)
+public sealed class MuteController(IAudioSessions audio, EventLog? log = null)
 {
     private readonly Dictionary<string, bool> intents = [];   // true = Muted。無い対象は、まだ最初の列挙をしていない
     private readonly HashSet<string> writeFailed = [];
     private HashSet<(string, string)> seen = [];               // 前回の列挙にあったセッション
     private IReadOnlyList<SessionInfo> sessions = [];
 
-    /// <summary>同期ループの1回ぶん。列挙して規則を当てはめる。</summary>
-    public Snapshot Sync(IReadOnlyList<string> targets) => Apply(targets, audio.ListSessions());
+    /// <summary>
+    /// 列挙して規則を当てはめる。同期ループからは引数なしで、セッション作成通知からは
+    /// 通知を受けた時刻(Stopwatch.GetTimestamp)を渡して呼ぶ。
+    /// </summary>
+    public Snapshot Sync(IReadOnlyList<string> targets, long? notifiedAt = null)
+    {
+        long origin = notifiedAt ?? Stopwatch.GetTimestamp();
+        var list = audio.ListSessions();
+        LogExternalChanges(targets, list);
+        return Apply(targets, list, notifiedAt != null ? "notify" : "sync", origin);
+    }
 
-    public Snapshot Toggle(IReadOnlyList<string> targets, string exe) =>
-        Set(targets, [exe], !State(exe).IsOn);
+    /// <param name="pressedAt">ボタンが押された時刻(Stopwatch.GetTimestamp)。ログの latency_ms の起点。</param>
+    public Snapshot Toggle(IReadOnlyList<string> targets, string exe, long? pressedAt = null) =>
+        Set(targets, [exe], !State(exe).IsOn, "ui", pressedAt);
 
     /// <summary>まとめトグル(FR-7)。全対象がミュート中かミュート予約中なら解除し、そうでなければミュートする。</summary>
-    public Snapshot ToggleAll(IReadOnlyList<string> targets) =>
-        Set(targets, targets, !targets.All(exe => State(exe).IsOn));
+    public Snapshot ToggleAll(IReadOnlyList<string> targets, long? pressedAt = null) =>
+        Set(targets, targets, !targets.All(exe => State(exe).IsOn), "group", pressedAt);
 
-    private Snapshot Set(IReadOnlyList<string> targets, IReadOnlyList<string> exes, bool mute)
+    private Snapshot Set(IReadOnlyList<string> targets, IReadOnlyList<string> exes, bool mute, string source, long? pressedAt)
     {
-        var chosen = exes.Where(targets.Contains).ToHashSet();
+        long origin = pressedAt ?? Stopwatch.GetTimestamp();
+        var chosen = exes.Where(targets.Contains).ToList();
         foreach (var exe in chosen)
         {
             intents[exe] = mute;
@@ -46,10 +59,14 @@ public sealed class MuteController(IAudioSessions audio)
         }
         var result = audio.SetMute(s => chosen.Any(exe => Matches(s, exe)), mute);
         NoteFailures(result);
-        return Apply(targets, result.Sessions);
+        foreach (var exe in chosen)
+            Log("toggle", source, exe, mute, result, result.Sessions.Where(s => Matches(s, exe)).ToList(), origin);
+        // いま書いたセッションは「見た」ことにする(下の規則 3 でもう一度書かない)
+        seen.UnionWith(result.Sessions.Where(s => chosen.Any(exe => Matches(s, exe))).Select(s => s.Key));
+        return Apply(targets, result.Sessions, "sync", origin);
     }
 
-    private Snapshot Apply(IReadOnlyList<string> targets, IReadOnlyList<SessionInfo> list)
+    private Snapshot Apply(IReadOnlyList<string> targets, IReadOnlyList<SessionInfo> list, string source, long origin)
     {
         foreach (var gone in intents.Keys.Where(exe => !targets.Contains(exe)).ToList())
         {
@@ -59,17 +76,22 @@ public sealed class MuteController(IAudioSessions audio)
 
         // 規則 3: Intent が Muted の対象に、前回の列挙に無かったセッションが現れたら、そのセッションだけをミュートする
         var fresh = list
-            .Where(s => !s.Muted && !seen.Contains(s.Key)
-                && targets.Any(exe => Matches(s, exe) && intents.GetValueOrDefault(exe)))
-            .Select(s => s.Key).ToHashSet();
+            .Where(s => !seen.Contains(s.Key) && targets.Any(exe => Matches(s, exe) && intents.GetValueOrDefault(exe)))
+            .ToList();
+        // Windows が保存済みのミュートを戻していて、もうミュートになっているものには書かない
+        var unmuted = fresh.Where(s => !s.Muted).Select(s => s.Key).ToHashSet();
         // 下の書き込みの途中で現れたセッションは「見た」ことにしない(次の同期で規則 3 にかける)
         seen = list.Select(s => s.Key).ToHashSet();
-        if (fresh.Count > 0)
+        var result = new MuteResult(list, [], []);
+        if (unmuted.Count > 0)
         {
-            var result = audio.SetMute(s => fresh.Contains(s.Key), true);
+            result = audio.SetMute(s => unmuted.Contains(s.Key), true);
             NoteFailures(result);
             list = result.Sessions;
         }
+        foreach (var exe in fresh.Select(s => s.Exe!).Distinct())
+            Log("session_created", source, exe, true, result, fresh.Where(s => s.Exe == exe).ToList(), origin,
+                fresh.Any(s => s.Exe == exe && !s.Muted) ? null : "already_muted");
 
         foreach (var exe in targets)
         {
@@ -102,7 +124,36 @@ public sealed class MuteController(IAudioSessions audio)
 
     private void NoteFailures(MuteResult result)
     {
-        foreach (var session in result.Failed)
-            if (session.Exe != null) writeFailed.Add(session.Exe);
+        foreach (var failure in result.Failed)
+            if (failure.Session.Exe != null) writeFailed.Add(failure.Session.Exe);
+    }
+
+    // 対象 1 件ぶんの操作をログに書く。own は、その操作が相手にしたセッション
+    private void Log(string @event, string source, string exe, bool mute, MuteResult result,
+        IReadOnlyList<SessionInfo> own, long origin, string? note = null)
+    {
+        if (log == null) return;
+        var errors = result.Failed.Where(f => own.Any(s => s.Key == f.Session.Key))
+            .Select(f => $"set_mute 0x{f.HResult:X8}").ToList();
+        string outcome = errors.Count > 0 && errors.Count == own.Count ? "failed"
+            : errors.Count > 0 || result.DeviceErrors.Count > 0 ? "partial"
+            : "ok";
+        var reasons = errors.Concat(result.DeviceErrors).Distinct().ToList();
+        log.Write(@event, source, exe, mute ? "mute" : "unmute", own.Count,
+            (long)Stopwatch.GetElapsedTime(origin).TotalMilliseconds, outcome,
+            reasons.Count > 0 ? string.Join("; ", reasons) : note);
+    }
+
+    // Windows 側(音量ミキサー等)で変えられたミュートをログに残す(FR-9)。前回もあったセッションだけを比べる
+    private void LogExternalChanges(IReadOnlyList<string> targets, IReadOnlyList<SessionInfo> list)
+    {
+        if (log == null) return;
+        foreach (var exe in targets)
+            foreach (bool muted in new[] { true, false })
+            {
+                int count = list.Count(s => Matches(s, exe) && s.Muted == muted
+                    && sessions.Any(old => old.Key == s.Key && old.Muted != muted));
+                if (count > 0) log.Write("external_change", "sync", exe, muted ? "mute" : "unmute", count, result: "ok");
+            }
     }
 }

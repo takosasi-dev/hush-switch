@@ -213,6 +213,114 @@ finally
     Directory.Delete(dir, recursive: true);
 }
 
+// ---- ログ(FR-15, §9.3, AC-18)----
+string logDir = Path.Combine(Path.GetTempPath(), "hushswitch-tests-" + Guid.NewGuid().ToString("N"));
+try
+{
+    Directory.CreateDirectory(logDir);
+    string Old(int days)
+    {
+        string file = Path.Combine(logDir, $"hushswitch-200001{days:00}-01.jsonl");
+        File.WriteAllText(file, "{}\n");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddDays(-days));
+        return file;
+    }
+    string old15 = Old(15), old13 = Old(13);
+    var log = new EventLog(logDir);
+    Check(!File.Exists(old15) && File.Exists(old13), "ログ: 更新から 15 日前のファイルは起動時に消し、13 日前のファイルは残す");
+    File.Delete(old13);
+
+    List<JsonElement> Lines() => Directory.GetFiles(logDir).Order().SelectMany(File.ReadAllLines)
+        .Select(line => JsonDocument.Parse(line).RootElement).ToList();
+    string? Text(JsonElement line, string key) => line.GetProperty(key).GetString();
+
+    var audio = new FakeAudio();
+    var controller = new MuteController(audio, log);
+    audio.Add("a1", A, muted: false);
+    audio.Add("a2", A, muted: false, device: "dev2");
+    audio.Add("b1", B, muted: false);
+    controller.Sync([A, B]);
+    Check(Lines().Count == 0, "ログ: 変化の無い同期は何も書かない");
+
+    controller.Toggle([A, B], A);
+    var line = Lines().Single();
+    Check(line.EnumerateObject().Select(p => p.Name).SequenceEqual(["ts", "event", "source", "exe", "action", "sessions", "latency_ms", "result", "reason"]),
+        "ログ: 1 行が §9.3 のキーを持つ JSON");
+    Check(DateTimeOffset.TryParse(Text(line, "ts"), out _) && Text(line, "event") == "toggle" && Text(line, "source") == "ui"
+        && Text(line, "exe") == A && Text(line, "action") == "mute" && line.GetProperty("sessions").GetInt32() == 2
+        && line.GetProperty("latency_ms").GetInt64() is >= 0 and < 1000 && Text(line, "result") == "ok" && Text(line, "reason") == null,
+        "ログ: 行のトグルは toggle / ui / mute / セッション数 / ok");
+
+    audio.Refuse.Add("a1");
+    controller.Toggle([A, B], A);
+    line = Lines()[^1];
+    Check(Text(line, "action") == "unmute" && Text(line, "result") == "partial" && Text(line, "reason") == "set_mute 0x80070005",
+        "ログ: 一部のセッションに書けなければ partial と理由");
+    audio.Refuse.Add("a2");
+    controller.Toggle([A, B], A);
+    Check(Text(Lines()[^1], "result") == "failed", "ログ: 全部のセッションに書けなければ failed");
+    audio.Refuse.Clear();
+
+    audio.DeviceErrors.Add("device 0x88890004");
+    controller.ToggleAll([A, B]);
+    var group = Lines().TakeLast(2).ToList();
+    Check(group.Select(l => Text(l, "exe")).SequenceEqual([A, B]) && group.All(l => Text(l, "source") == "group"
+        && Text(l, "result") == "partial" && Text(l, "reason") == "device 0x88890004"),
+        "ログ: まとめトグルは対象ごとに 1 行(group)。途中でデバイスが抜かれたら partial と理由(§10)");
+    audio.DeviceErrors.Clear();
+
+    // ここまでで A・B とも Intent は Muted。新しいセッションを、通知の経路と同期の経路で見つける
+    int before = Lines().Count;
+    audio.Add("a3", A, muted: false);
+    controller.Sync([A, B], System.Diagnostics.Stopwatch.GetTimestamp());
+    line = Lines()[^1];
+    Check(Lines().Count == before + 1 && Text(line, "event") == "session_created" && Text(line, "source") == "notify"
+        && Text(line, "exe") == A && line.GetProperty("sessions").GetInt32() == 1 && Text(line, "result") == "ok" && audio.IsMuted("a3"),
+        "ログ: 通知で見つけた新しいセッションのミュートは session_created / notify");
+    audio.Add("b2", B, muted: true);
+    audio.Written.Clear();
+    controller.Sync([A, B]);
+    line = Lines()[^1];
+    Check(Text(line, "source") == "sync" && Text(line, "exe") == B && Text(line, "reason") == "already_muted" && audio.Written.Count == 0,
+        "ログ: Windows がミュートを戻していた新しいセッションには書かず、already_muted と残す");
+
+    audio.Mute("a3", false);
+    audio.Mute("b1", false);
+    audio.Mute("b2", false);
+    controller.Sync([A, B]);
+    var external = Lines().TakeLast(2).ToList();
+    Check(external.All(l => Text(l, "event") == "external_change" && Text(l, "action") == "unmute")
+        && external[0].GetProperty("sessions").GetInt32() == 1 && external[1].GetProperty("sessions").GetInt32() == 2,
+        "ログ: Windows 側での変更は external_change(FR-9)");
+
+    string today = Path.Combine(logDir, $"hushswitch-{DateTime.Now:yyyyMMdd}-");
+    File.WriteAllBytes(today + "01.jsonl", new byte[EventLog.MaxBytes + 1]);
+    log.Write("error", reason: "test");
+    Check(File.ReadAllText(today + "02.jsonl").Contains("\"reason\":\"test\""), "ログ: 5 MB を超えたら新しいファイルに切り替える");
+}
+finally
+{
+    Directory.Delete(logDir, recursive: true);
+}
+
+// ---- 専用スレッドの失敗の数えかた(§10: 続けて 10 回失敗したらエラー表示)----
+{
+    var counts = new List<int>();
+    Exception? last = null;
+    int calls = 0;
+    using var done = new ManualResetEventSlim();
+    using var thread = new AudioThread(
+        () =>
+        {
+            calls++;
+            if (calls is <= 3 or 5) throw new AudioUnavailableException("test");
+            if (calls == 6) done.Set();
+        },
+        (e, count) => { last = e; counts.Add(count); }, intervalMs: 5);
+    Check(done.Wait(5000) && counts.SequenceEqual([1, 2, 3, 1]) && last is AudioUnavailableException,
+        "専用スレッド: 例外になっても次の周期で再開し、続けて失敗した回数を知らせる(成功で 0 に戻る)");
+}
+
 Console.WriteLine(failures == 0 ? "# すべて通過" : $"# 失敗 {failures} 件");
 return failures;
 
@@ -237,17 +345,19 @@ sealed class FakeAudio : IAudioSessions
 
     public IReadOnlyList<SessionInfo> ListSessions() => [.. Sessions];
 
+    public List<string> DeviceErrors { get; } = []; // 書き込みの途中で読めなくなったデバイス
+
     public MuteResult SetMute(Func<SessionInfo, bool> target, bool mute)
     {
-        var failed = new List<SessionInfo>();
+        var failed = new List<WriteFailure>();
         for (int i = 0; i < Sessions.Count; i++)
         {
             var session = Sessions[i];
             if (!target(session)) continue;
             Written.Add(session.InstanceId);
-            if (Refuse.Contains(session.InstanceId)) failed.Add(session);
+            if (Refuse.Contains(session.InstanceId)) failed.Add(new WriteFailure(session, unchecked((int)0x80070005)));
             else if (!Ignore.Contains(session.InstanceId)) Sessions[i] = session with { Muted = mute };
         }
-        return new MuteResult([.. Sessions], failed);
+        return new MuteResult([.. Sessions], failed, [.. DeviceErrors]);
     }
 }
