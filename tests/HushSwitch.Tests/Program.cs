@@ -159,6 +159,46 @@ Display Show(Snapshot snapshot, string exe) => snapshot.Targets.Single(t => t.Ex
     Check(all.Apps.SequenceEqual([A, "x.exe"]), "追加ダイアログの一覧: 今セッションを持つ exe 名");
 }
 
+// ---- カテゴリーごとのまとめトグル ----
+{
+    const string C = "c.exe";
+    var audio = new FakeAudio();
+    var controller = new MuteController(audio);
+    audio.Add("a1", A, muted: false);
+    audio.Add("c1", C, muted: false);
+    audio.Add("x1", "x.exe", muted: false);
+    controller.Sync([A, B, C]);
+    controller.Toggle([A, B, C], B);   // B はミュート予約中(カテゴリーの外)
+    var some = controller.ToggleSome([A, B, C], [A]);
+    Check(Show(some, A) == Display.Muted && !audio.IsMuted("c1") && !audio.IsMuted("x1"),
+        "カテゴリー: 中の対象だけをミュートし、外の対象と登録外には書かない(INV-10)");
+    Check(Show(some, B) == Display.Reserved, "カテゴリー: 外の対象の予約(意図)は残る");
+    audio.Add("b1", B, muted: false);
+    Check(Show(controller.Sync([A, B, C]), B) == Display.Muted, "カテゴリー: 外の対象の予約は生きていて、鳴り始めたらミュートする");
+    some = controller.ToggleSome([A, B, C], [A]);
+    Check(Show(some, A) == Display.Unmuted && Show(some, B) == Display.Muted, "カテゴリー: 中が全部ミュート中なら、中だけを解除する");
+}
+
+// ---- 終了時の確認が要る状態と、終了時の解除(FR-13, FR-17)----
+{
+    Check(new[] { Display.Muted, Display.Partial, Display.Reserved }.All(d => new TargetState(A, d, false).HasMute)
+        && new[] { Display.Unmuted, Display.Silent }.All(d => !new TargetState(A, d, false).HasMute),
+        "ミュートあり: ミュート中・一部ミュート・ミュート予約中だけ(終了時の確認と、トレイの絵)");
+
+    var audio = new FakeAudio();
+    var controller = new MuteController(audio);
+    audio.Add("a1", A, muted: true);
+    audio.Add("a2", A, muted: false);
+    audio.Add("c1", "c.exe", muted: true);
+    controller.Sync([A, B]);
+    controller.Toggle([A, B], B);   // B はミュート予約中
+    var after = controller.UnmuteAll([A, B]);
+    Check(Show(after, A) == Display.Unmuted && Show(after, B) == Display.Silent && audio.IsMuted("c1"),
+        "終了時の解除: 全対象を解除し、予約も取り消す。登録していないアプリには書かない(INV-10)");
+    audio.Add("b1", B, muted: false);
+    Check(Show(controller.Sync([A, B]), B) == Display.Unmuted, "終了時の解除のあと、新しいセッションはミュートしない");
+}
+
 // ---- 設定ファイル(FR-2, FR-3, FR-11)----
 string dir = Path.Combine(Path.GetTempPath(), "hushswitch-tests-" + Guid.NewGuid().ToString("N"));
 string path = Path.Combine(dir, "settings.json");
@@ -178,10 +218,46 @@ try
     using (var doc = JsonDocument.Parse(File.ReadAllText(path)))
     {
         var keys = doc.RootElement.EnumerateObject().Select(p => p.Name);
-        Check(keys.SequenceEqual(["schema", "targets", "close_to_tray", "always_on_top", "on_exit"]),
-            "INV-9: 設定ファイルにあるのは §9.2 のキーだけ(ミュートの状態は書かない)");
+        Check(keys.SequenceEqual(["schema", "targets", "close_to_tray", "always_on_top", "on_exit", "theme", "start_in_tray", "hotkey", "window",
+            "design", "accent", "text_size", "opacity", "show_icons", "show_status", "show_summary", "show_remove", "categories", "category_of"]),
+            "INV-9: 設定ファイルにあるのは §9.2 のキーと画面の設定だけ(ミュートの状態は書かない)");
     }
     Check(new TargetStore(path).Targets.SequenceEqual(store.Targets), "設定: 再起動後も対象が同じ順で残る");
+
+    // カテゴリー
+    Check(store.Categories.Select(c => c.Name).SequenceEqual(TargetStore.DefaultCategories), "カテゴリー: 初めは既定の 4 つ");
+    Check(store.AddCategory("その他") != null && store.AddCategory(" ") != null && store.AddCategory("ゲーム") != null
+            && store.AddCategory(new string('あ', 21)) != null, "カテゴリー: 「その他」・空・重複・長すぎる名前を拒否する");
+    Check(store.AddCategory(" 配信 ") == null && store.Categories[^1].Name == "配信", "カテゴリー: 前後の空白を除いて足す");
+    store.Assign("discord.exe", "配信");
+    store.Assign("app02.exe", "ゲーム");
+    store.Assign("app03.exe", "無いカテゴリー");
+    Check(store.CategoryOf("discord.exe") == "配信" && store.CategoryOf("app03.exe") == null, "カテゴリー: 振り分ける(無いカテゴリーには入れない)");
+    Check(store.RenameCategory("配信", "通話2") == null && store.CategoryOf("discord.exe") == "通話2", "カテゴリー: 名前を変えると振り分けも付いていく");
+    Check(store.RenameCategory("通話2", "ゲーム") != null, "カテゴリー: ほかと同じ名前には変えられない");
+    store.Categories.First(c => c.Name == "ゲーム").Hotkey = "Ctrl+Alt+G";
+    store.Hotkey = "Ctrl+Alt+M";
+    Check(store.HotkeyUsedBy("ctrl+alt+g", "通話2") == "ゲーム" && store.HotkeyUsedBy("Ctrl+Alt+G", "ゲーム") == null
+            && store.HotkeyUsedBy("Ctrl+Alt+M", "ゲーム") != null && store.HotkeyUsedBy("Ctrl+Alt+M", "") == null,
+        "カテゴリー: ホットキーの重なりを見つける(自分は除く)");
+    store.Save();
+    var reloaded = new TargetStore(path);
+    Check(reloaded.CategoryOf("discord.exe") == "通話2" && reloaded.Categories.First(c => c.Name == "ゲーム").Hotkey == "Ctrl+Alt+G",
+        "カテゴリー: 再起動後も振り分けとホットキーが残る");
+    Check(File.ReadAllText(path).Contains("\"ゲーム\""), "カテゴリー: 名前は読める形で保存する");
+    store.RemoveCategory("通話2");
+    store.Remove("app02.exe");
+    reloaded = new TargetStore(path);
+    Check(reloaded.CategoryOf("discord.exe") == null && reloaded.CategoryOf("app02.exe") == null && reloaded.Categories.All(c => c.Name != "通話2"),
+        "カテゴリー: 消したカテゴリーのアプリは「その他」に戻り、外したアプリの振り分けも消える");
+    File.WriteAllText(path, """{"schema":1,"targets":["a.exe"],"categories":[],"category_of":{"a.exe":"ゲーム","b.exe":"ゲーム"}}""");
+    Check(new TargetStore(path).Categories.Count == 0 && new TargetStore(path).CategoryOf("a.exe") == null,
+        "カテゴリー: 空の配列なら空のまま(既定に戻さない)。無いカテゴリーを指す振り分けは捨てる");
+    File.WriteAllText(path, """{"schema":1,"targets":["a.exe"],"categories":[{"name":"ゲーム","collapsed":true},{"name":"その他"},{"name":"ゲーム"},5],"category_of":{"a.exe":"ゲーム","b.exe":"ゲーム"}}""");
+    reloaded = new TargetStore(path);
+    Check(reloaded.Categories.Count == 1 && reloaded.Categories[0].Collapsed && reloaded.CategoryOf("a.exe") == "ゲーム" && reloaded.CategoryOf("b.exe") == null,
+        "カテゴリー: 使えない要素は読み飛ばし、登録していないアプリの振り分けは捨てる");
+    store = new TargetStore(path);
 
     File.WriteAllText(path, """{"schema":1,"targets":["ok.exe","Upper.exe","no-ext","a/b.exe",5,"ok.exe"],"close_to_tray":false,"always_on_top":true,"on_exit":"leave","unknown":1}""");
     store = new TargetStore(path);
@@ -192,6 +268,37 @@ try
 
     File.WriteAllText(path, """{"schema":1,"targets":[],"on_exit":"later"}""");
     Check(new TargetStore(path).OnExit == "ask", "設定: on_exit が知らない値なら ask に戻す");
+
+    store = new TargetStore(path);
+    store.AlwaysOnTop = true;
+    store.OnExit = "unmute";
+    store.Theme = "dark";
+    store.StartInTray = true;
+    store.Hotkey = "Ctrl+Alt+M";
+    store.Window = [10, 20, 400, 500];
+    (store.Design, store.Accent, store.TextSize, store.Opacity, store.ShowRemove) = ("tiles", "pink", "xlarge", 60, false);
+    store.Save();
+    store = new TargetStore(path);
+    Check(store.AlwaysOnTop && store.OnExit == "unmute" && store.CloseToTray, "設定: 手前に表示と on_exit の変更が保存される(FR-13, FR-18)");
+    Check(store.Theme == "dark" && store.StartInTray && store.Hotkey == "Ctrl+Alt+M" && store.Window!.SequenceEqual([10, 20, 400, 500.0]),
+        "設定: 配色・起動時の格納・ホットキー・ウィンドウの位置が保存される");
+    Check(store.Design == "tiles" && store.Accent == "pink" && store.TextSize == "xlarge" && store.Opacity == 60
+            && !store.ShowRemove && store.ShowIcons && store.ShowStatus && store.ShowSummary,
+        "設定: デザイン・アクセント・文字の大きさ・透明度・表示の切り替えが保存される");
+
+    File.WriteAllText(path, """{"schema":1,"targets":[],"theme":"pink","start_in_tray":"yes","hotkey":5,"window":[1,2,-3,4],"design":"neon","accent":"#123456","text_size":3,"opacity":10,"show_icons":"no"}""");
+    store = new TargetStore(path);
+    Check(store.Theme == "system" && !store.StartInTray && store.Hotkey == "" && store.Window == null,
+        "設定: 画面の設定が知らない値なら既定値に戻す");
+    Check(store.Design == "standard" && store.Accent == "system" && store.TextSize == "medium" && store.Opacity == 100 && store.ShowIcons,
+        "設定: 見た目の設定が知らない値なら既定値に戻す(透明度は 30% 未満を認めない)");
+
+    Check(ExePaths.DevicePath(@"{0.0.0.00000000}.{9af1e3c8}|\Device\HarddiskVolume3\Apps\Some App\app.exe%b{00000000-0000-0000-0000-000000000000}|1%b8488")
+            == @"\Device\HarddiskVolume3\Apps\Some App\app.exe"
+        && ExePaths.DevicePath("{0.0.0.00000000}.{4f1ec70d}|#%b{A9EF3FD9-4240-455E-A4D5-F2B3301887B2}|1%b#") == null
+        && ExePaths.DevicePath("") == null,
+        "アイコン: セッションの識別子から exe の場所を取り出す(システム音には無い)");
+    Check(ExePaths.FromSession(@"x|\Device\Nowhere9\a.exe%b{0}|1%b1") == null, "アイコン: ドライブが分からない場所は null");
 
     foreach (string broken in new[] { """{"schema":1,"targets":["a.e""", """{"schema":2,"targets":["a.exe"]}""" })
     {
@@ -292,6 +399,16 @@ try
     Check(external.All(l => Text(l, "event") == "external_change" && Text(l, "action") == "unmute")
         && external[0].GetProperty("sessions").GetInt32() == 1 && external[1].GetProperty("sessions").GetInt32() == 2,
         "ログ: Windows 側での変更は external_change(FR-9)");
+
+    controller.ToggleAll([A, B], source: "tray");
+    Check(Lines().TakeLast(2).All(l => Text(l, "event") == "toggle" && Text(l, "source") == "tray" && Text(l, "action") == "mute"),
+        "ログ: トレイのまとめトグルは toggle / tray");
+    controller.UnmuteAll([A, B]);
+    Check(Lines().TakeLast(2).All(l => Text(l, "event") == "toggle" && Text(l, "source") == "exit" && Text(l, "action") == "unmute")
+        && audio.Sessions.All(s => !s.Muted),
+        "ログ: 終了時の解除は toggle / exit / unmute");
+    log.Write("exit", "tray", action: "unmute");
+    Check(Text(Lines()[^1], "event") == "exit" && Lines()[^1].EnumerateObject().Count() == 9, "ログ: 終了の行も §9.3 の 9 キー");
 
     string today = Path.Combine(logDir, $"hushswitch-{DateTime.Now:yyyyMMdd}-");
     File.WriteAllBytes(today + "01.jsonl", new byte[EventLog.MaxBytes + 1]);

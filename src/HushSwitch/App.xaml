@@ -1,9 +1,37 @@
-<!-- アプリ全体の見た目を決める(Windows の配色に合わせる)。起動の処理は App.xaml.cs にある。 -->
+<!-- アプリ全体の見た目を決める(配色は設定に従う。既定は Windows に合わせる)。起動の処理は App.xaml.cs にある。 -->
 <Application x:Class="HushSwitch.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              ThemeMode="System">
     <Application.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+
+        <!-- 絵文字のかわりに使う、Windows のアイコン用フォント(Windows 10 には後ろのほうしか無い) -->
+        <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+
+        <!-- 行やまとまりを囲む、角の丸い枠 -->
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="12,10" />
+        </Style>
+
+        <!-- アプリのアイコンをまだ読めていないときに出す、共通の絵(Icon が null のときだけ見える) -->
+        <Style x:Key="IconPlaceholder" TargetType="TextBlock">
+            <Setter Property="Text" Value="&#xECAA;" />
+            <Setter Property="FontFamily" Value="{StaticResource IconFont}" />
+            <Setter Property="FontSize" Value="22" />
+            <Setter Property="Opacity" Value="0.5" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Icon}" Value="{x:Null}">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
     </Application.Resources>
 </Application>

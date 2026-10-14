@@ -4,14 +4,24 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
+    <!-- トレイアイコン(FR-16)のためだけに使う。WPF にはトレイの部品が無い -->
+    <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
+    <!-- exe・ウィンドウ・タスクバーのアイコン。tools/make_icon.cs で描いて作る -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
     <!-- 配布は self-contained の単一 exe(D-14)。dotnet publish src/HushSwitch -c Release -r win-x64 -p:SelfContained=true -o dist -->
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WPF と同じ名前の型(Application・Button 等)がぶつからないよう、暗黙の using から外す -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\HushSwitch.Core\HushSwitch.Core.csproj" />

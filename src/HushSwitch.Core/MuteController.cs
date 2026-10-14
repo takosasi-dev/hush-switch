@@ -16,10 +16,17 @@ public sealed record TargetState(string Exe, Display Display, bool WriteFailed)
 
     /// <summary>削除してよい状態か(FR-4)。</summary>
     public bool CanRemove => Display is Display.Unmuted or Display.Silent;
+
+    /// <summary>ミュート中・一部ミュート・ミュート予約中のどれかか(終了時の確認 FR-13 と、トレイの絵 FR-17)。</summary>
+    public bool HasMute => Display is Display.Muted or Display.Partial or Display.Reserved;
 }
 
-/// <summary>画面に出す1回ぶんの状態。Apps は今セッションを持つ exe 名(追加ダイアログ用)。</summary>
-public sealed record Snapshot(IReadOnlyList<TargetState> Targets, IReadOnlyList<string> Apps);
+/// <summary>
+/// 画面に出す1回ぶんの状態。Apps は今セッションを持つ exe 名(追加ダイアログ用)、
+/// Ids は exe 名 → そのアプリのセッションの識別子(アイコンを読むために、exe の場所を取り出す)。
+/// </summary>
+public sealed record Snapshot(
+    IReadOnlyList<TargetState> Targets, IReadOnlyList<string> Apps, IReadOnlyDictionary<string, string> Ids);
 
 public sealed class MuteController(IAudioSessions audio, EventLog? log = null)
 {
@@ -45,8 +52,19 @@ public sealed class MuteController(IAudioSessions audio, EventLog? log = null)
         Set(targets, [exe], !State(exe).IsOn, "ui", pressedAt);
 
     /// <summary>まとめトグル(FR-7)。全対象がミュート中かミュート予約中なら解除し、そうでなければミュートする。</summary>
-    public Snapshot ToggleAll(IReadOnlyList<string> targets, long? pressedAt = null) =>
-        Set(targets, targets, !targets.All(exe => State(exe).IsOn), "group", pressedAt);
+    /// <param name="source">ログの source。ウィンドウのボタンは group、トレイのメニューは tray、ホットキーは hotkey。</param>
+    public Snapshot ToggleAll(IReadOnlyList<string> targets, long? pressedAt = null, string source = "group") =>
+        Set(targets, targets, !targets.All(exe => State(exe).IsOn), source, pressedAt);
+
+    /// <summary>
+    /// 一部の対象(カテゴリー)をまとめて切り替える。規則は FR-7 と同じで、exes が全部ミュート中か予約中なら解除する。
+    /// targets には全対象を渡す(渡さなかった対象の意図は Apply で消えるため)。exes の外には書かない(INV-10)。
+    /// </summary>
+    public Snapshot ToggleSome(IReadOnlyList<string> targets, IReadOnlyList<string> exes, long? pressedAt = null, string source = "category") =>
+        Set(targets, exes, !exes.All(exe => State(exe).IsOn), source, pressedAt);
+
+    /// <summary>終了時に全対象を解除する(FR-13 の unmute)。</summary>
+    public Snapshot UnmuteAll(IReadOnlyList<string> targets) => Set(targets, targets, false, "exit", null);
 
     private Snapshot Set(IReadOnlyList<string> targets, IReadOnlyList<string> exes, bool mute, string source, long? pressedAt)
     {
@@ -103,8 +121,10 @@ public sealed class MuteController(IAudioSessions audio, EventLog? log = null)
         }
 
         sessions = list;
-        var apps = list.Where(s => !s.IsSystemSounds && s.Exe != null).Select(s => s.Exe!).Distinct().Order().ToList();
-        return new Snapshot(targets.Select(State).ToList(), apps);
+        var named = list.Where(s => !s.IsSystemSounds && s.Exe != null).ToList();
+        var apps = named.Select(s => s.Exe!).Distinct().Order().ToList();
+        var ids = named.GroupBy(s => s.Exe!).ToDictionary(g => g.Key, g => g.First().InstanceId);
+        return new Snapshot(targets.Select(State).ToList(), apps, ids);
     }
 
     private TargetState State(string exe)

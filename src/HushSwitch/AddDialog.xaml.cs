@@ -2,33 +2,36 @@
 // 登録するのはファイル名だけで、選んだファイルのパスは持たない(INV-6)。
 using System.IO;
 using System.Windows;
+using System.Windows.Media;
 using Microsoft.Win32;
 
 namespace HushSwitch;
 
 /// <summary>一覧の1件。登録済みなら CanAdd は false(灰色で選択不可)。</summary>
-public sealed record AppItem(string Exe, bool CanAdd)
+public sealed record AppItem(string Exe, bool CanAdd, ImageSource? Icon)
 {
-    // 一覧の表示と、読み上げソフトに渡す名前になる
+    // 読み上げソフトに渡す名前になる
     public override string ToString() => Exe;
 }
 
 public partial class AddDialog : Window
 {
     private readonly TargetStore store;
+    private readonly AppIcons icons;
 
-    public AddDialog(TargetStore store, IReadOnlyList<string> apps)
+    public AddDialog(TargetStore store, Snapshot snapshot, AppIcons icons)
     {
         this.store = store;
+        this.icons = icons;
         InitializeComponent();
-        Update(apps);
+        Update(snapshot);
     }
 
     /// <summary>同期のたびにメインウィンドウから呼ばれる。中身が変わったときだけ並べ直し、選択は保つ。</summary>
-    public void Update(IReadOnlyList<string> apps)
+    public void Update(Snapshot snapshot)
     {
-        var items = apps.Where(TargetStore.IsValidName)
-            .Select(exe => new AppItem(exe, !store.Targets.Contains(exe))).ToList();
+        var items = snapshot.Apps.Where(TargetStore.IsValidName)
+            .Select(exe => new AppItem(exe, !store.Targets.Contains(exe), icons.Get(exe, snapshot.Ids.GetValueOrDefault(exe)))).ToList();
         if (Apps.ItemsSource is List<AppItem> current && current.SequenceEqual(items)) return;
         string? selected = (Apps.SelectedItem as AppItem)?.Exe;
         Apps.ItemsSource = items;

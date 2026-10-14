@@ -1,55 +1,315 @@
-<!-- メインウィンドウ(§9.1)。上から エラー帯 / まとめトグル / 対象一覧 / 追加ボタン / 知らせ の順に並べる。 -->
+<!-- メインウィンドウ(§9.1)。上から エラー帯 / 見出し(件数・手前に表示・設定)/ まとめトグル / 対象一覧 / 追加ボタン / 知らせ の順に並べる。
+     一覧の行の形はデザインごとに Row.<名前> のテンプレートで持ち、Look.Apply が差し替える。 -->
 <Window x:Class="HushSwitch.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="HushSwitch" Width="400" Height="480" MinWidth="340" MinHeight="300">
-    <DockPanel Margin="12">
+        Title="HushSwitch" Width="420" Height="540" MinWidth="340" MinHeight="320">
+    <Window.Resources>
+        <!-- 「表示する物」の設定。Look.Apply が書き換える -->
+        <Visibility x:Key="RowIconVisibility">Visible</Visibility>
+        <Visibility x:Key="RowStatusVisibility">Visible</Visibility>
+        <Visibility x:Key="RowRemoveVisibility">Visible</Visibility>
+        <Visibility x:Key="SummaryVisibility">Visible</Visibility>
+        <SolidColorBrush x:Key="GamingBackground" Color="#0B0B12" />
+        <SolidColorBrush x:Key="GamingCard" Color="#151522" />
+        <SolidColorBrush x:Key="Critical" Color="#E5484D" />
+
+        <ItemsPanelTemplate x:Key="Panel.list">
+            <StackPanel />
+        </ItemsPanelTemplate>
+        <ItemsPanelTemplate x:Key="Panel.tiles">
+            <WrapPanel />
+        </ItemsPanelTemplate>
+
+        <!-- カテゴリーの見出し。中身は CollectionViewGroup(Name がカテゴリー名)。開閉の印と切り替えの文言は先頭の行から取る -->
+        <DataTemplate x:Key="CategoryHeader">
+            <DockPanel Margin="0,6,0,6">
+                <Button DockPanel.Dock="Right" Content="{Binding Items[0].CategoryButtonText}" Click="OnCategoryToggle"
+                        Padding="10,3" FontSize="12" ToolTip="このカテゴリーをまとめて切り替える"
+                        AutomationProperties.Name="{Binding Name, StringFormat='{}{0} をまとめて切り替える'}"
+                        AutomationProperties.AutomationId="{Binding Name, StringFormat='category-toggle:{0}'}" />
+                <Button Click="OnCategoryCollapse" Background="Transparent" BorderThickness="0" Padding="2,3"
+                        HorizontalAlignment="Left" ToolTip="畳む / 広げる"
+                        AutomationProperties.Name="{Binding Name, StringFormat='{}{0} を畳む・広げる'}"
+                        AutomationProperties.AutomationId="{Binding Name, StringFormat='category-collapse:{0}'}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock FontFamily="{StaticResource IconFont}" FontSize="11" VerticalAlignment="Center" Margin="0,1,8,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Text" Value="&#xE70D;" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Items[0].Shown}" Value="False">
+                                            <Setter Property="Text" Value="&#xE76C;" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding ItemCount, StringFormat=' ({0})'}" Opacity="0.6" />
+                    </StackPanel>
+                </Button>
+            </DockPanel>
+        </DataTemplate>
+
+        <!-- 標準 -->
+        <DataTemplate x:Key="Row.standard">
+            <Border Style="{StaticResource Card}" Margin="0,0,0,6" Visibility="{Binding Shown, Converter={StaticResource BoolToVisibility}}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Grid Width="28" Height="28" Margin="0,0,12,0" VerticalAlignment="Center" Visibility="{DynamicResource RowIconVisibility}">
+                        <TextBlock Style="{StaticResource IconPlaceholder}" />
+                        <Image Source="{Binding Icon}" RenderOptions.BitmapScalingMode="HighQuality" />
+                    </Grid>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Exe}" ToolTip="{Binding Exe}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0" Visibility="{DynamicResource RowStatusVisibility}">
+                            <Ellipse Width="8" Height="8" Fill="{Binding StatusBrush}" VerticalAlignment="Center" Margin="0,1,6,0" />
+                            <TextBlock Text="{Binding Status}" Opacity="0.7"
+                                       AutomationProperties.AutomationId="{Binding Exe, StringFormat='status:{0}'}" />
+                        </StackPanel>
+                        <TextBlock Text="一部のセッションを操作できませんでした" TextWrapping="Wrap" Margin="0,2,0,0"
+                                   Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                                   Visibility="{Binding WriteFailed, Converter={StaticResource BoolToVisibility}}" />
+                    </StackPanel>
+                    <Button Grid.Column="2" Click="OnToggle"
+                            AutomationProperties.Name="{Binding ButtonText}"
+                            AutomationProperties.AutomationId="{Binding Exe, StringFormat='toggle:{0}'}"
+                            MinWidth="104" Margin="8,0,0,0" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding ButtonGlyph}" FontFamily="{StaticResource IconFont}" FontSize="14"
+                                       VerticalAlignment="Center" Margin="0,1,6,0" />
+                            <TextBlock Text="{Binding ButtonText}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button Grid.Column="3" Content="&#xE74D;" Click="OnRemove" Visibility="{DynamicResource RowRemoveVisibility}"
+                            FontFamily="{StaticResource IconFont}" FontSize="14" Padding="8"
+                            ToolTip="一覧から削除" AutomationProperties.Name="削除"
+                            AutomationProperties.AutomationId="{Binding Exe, StringFormat='remove:{0}'}"
+                            Margin="6,0,0,0" VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <!-- コンパクト: 1 行に詰め、ボタンはアイコンだけ。状態は色の印(文字はツールチップ) -->
+        <DataTemplate x:Key="Row.compact">
+            <Border Style="{StaticResource Card}" Padding="8,4" Margin="0,0,0,3" ToolTip="{Binding Status}" Visibility="{Binding Shown, Converter={StaticResource BoolToVisibility}}">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="&#xE74D;" Click="OnRemove" Visibility="{DynamicResource RowRemoveVisibility}"
+                            FontFamily="{StaticResource IconFont}" FontSize="12" Padding="6,4" Margin="4,0,0,0"
+                            ToolTip="一覧から削除" AutomationProperties.Name="削除"
+                            AutomationProperties.AutomationId="{Binding Exe, StringFormat='remove:{0}'}" />
+                    <Button DockPanel.Dock="Right" Content="{Binding ButtonGlyph}" Click="OnToggle"
+                            FontFamily="{StaticResource IconFont}" FontSize="14" Padding="10,4" Margin="6,0,0,0"
+                            ToolTip="{Binding ButtonText}" AutomationProperties.Name="{Binding ButtonText}"
+                            AutomationProperties.AutomationId="{Binding Exe, StringFormat='toggle:{0}'}" />
+                    <Grid DockPanel.Dock="Left" Width="18" Height="18" Margin="0,0,8,0" Visibility="{DynamicResource RowIconVisibility}">
+                        <TextBlock Style="{StaticResource IconPlaceholder}" FontSize="14" />
+                        <Image Source="{Binding Icon}" RenderOptions.BitmapScalingMode="HighQuality" />
+                    </Grid>
+                    <Ellipse DockPanel.Dock="Left" Width="8" Height="8" Fill="{Binding StatusBrush}" Margin="0,1,8,0"
+                             Visibility="{DynamicResource RowStatusVisibility}"
+                             AutomationProperties.Name="{Binding Status}"
+                             AutomationProperties.AutomationId="{Binding Exe, StringFormat='status:{0}'}" />
+                    <TextBlock DockPanel.Dock="Right" Text="&#xE7BA;" FontFamily="{StaticResource IconFont}" Margin="6,0,0,0"
+                               VerticalAlignment="Center" Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                               ToolTip="一部のセッションを操作できませんでした"
+                               Visibility="{Binding WriteFailed, Converter={StaticResource BoolToVisibility}}" />
+                    <TextBlock Text="{Binding Exe}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                </DockPanel>
+            </Border>
+        </DataTemplate>
+
+        <!-- 大きめ: 余白とボタンを大きく(押しやすさ)。ボタンは名前の下の段に置き、狭くても名前を潰さない。文字の大きさは別の設定 -->
+        <DataTemplate x:Key="Row.large">
+            <Border Style="{StaticResource Card}" Padding="16,14" Margin="0,0,0,8" Visibility="{Binding Shown, Converter={StaticResource BoolToVisibility}}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid Width="40" Height="40" Margin="0,0,14,0" VerticalAlignment="Center" Visibility="{DynamicResource RowIconVisibility}">
+                        <TextBlock Style="{StaticResource IconPlaceholder}" FontSize="30" />
+                        <Image Source="{Binding Icon}" RenderOptions.BitmapScalingMode="HighQuality" />
+                    </Grid>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Exe}" ToolTip="{Binding Exe}" FontSize="17" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0" Visibility="{DynamicResource RowStatusVisibility}">
+                            <Ellipse Width="10" Height="10" Fill="{Binding StatusBrush}" VerticalAlignment="Center" Margin="0,1,8,0" />
+                            <TextBlock Text="{Binding Status}" Opacity="0.75"
+                                       AutomationProperties.AutomationId="{Binding Exe, StringFormat='status:{0}'}" />
+                        </StackPanel>
+                        <TextBlock Text="一部のセッションを操作できませんでした" TextWrapping="Wrap" Margin="0,4,0,0"
+                                   Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                                   Visibility="{Binding WriteFailed, Converter={StaticResource BoolToVisibility}}" />
+                    </StackPanel>
+                    <DockPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,12,0,0">
+                        <Button DockPanel.Dock="Right" Content="&#xE74D;" Click="OnRemove" Visibility="{DynamicResource RowRemoveVisibility}"
+                                FontFamily="{StaticResource IconFont}" FontSize="16" MinWidth="52" MinHeight="48"
+                                ToolTip="一覧から削除" AutomationProperties.Name="削除"
+                                AutomationProperties.AutomationId="{Binding Exe, StringFormat='remove:{0}'}"
+                                Margin="8,0,0,0" />
+                        <Button Click="OnToggle" HorizontalAlignment="Stretch" MinHeight="48" FontSize="16"
+                                AutomationProperties.Name="{Binding ButtonText}"
+                                AutomationProperties.AutomationId="{Binding Exe, StringFormat='toggle:{0}'}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding ButtonGlyph}" FontFamily="{StaticResource IconFont}" FontSize="18"
+                                           VerticalAlignment="Center" Margin="0,1,8,0" />
+                                <TextBlock Text="{Binding ButtonText}" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </DockPanel>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <!-- タイル: アイコンを並べ、タイルを押すと切り替え。枠の色が状態、ミュートのあいだは赤く染まる。削除は右クリック -->
+        <DataTemplate x:Key="Row.tiles">
+            <Button Click="OnToggle" Width="116" Height="116" Margin="0,0,6,6" Padding="6"
+                    Visibility="{Binding Shown, Converter={StaticResource BoolToVisibility}}"
+                    HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"
+                    BorderBrush="{Binding StatusBrush}" BorderThickness="2"
+                    ToolTip="{Binding Exe}" AutomationProperties.Name="{Binding Exe}" AutomationProperties.HelpText="{Binding Status}"
+                    AutomationProperties.AutomationId="{Binding Exe, StringFormat='toggle:{0}'}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Border Grid.RowSpan="3" Margin="-6" CornerRadius="4" Background="#40E5484D"
+                            Visibility="{Binding HasMute, Converter={StaticResource BoolToVisibility}}" />
+                    <Grid Width="40" Height="40" VerticalAlignment="Center" Visibility="{DynamicResource RowIconVisibility}">
+                        <TextBlock Style="{StaticResource IconPlaceholder}" FontSize="30" />
+                        <Image Source="{Binding Icon}" RenderOptions.BitmapScalingMode="HighQuality" />
+                    </Grid>
+                    <TextBlock Grid.Row="1" Text="{Binding Exe}" FontSize="12" FontWeight="SemiBold"
+                               HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Row="2" Text="{Binding Status}" FontSize="11" Opacity="0.75"
+                               HorizontalAlignment="Center" TextTrimming="CharacterEllipsis"
+                               Visibility="{DynamicResource RowStatusVisibility}"
+                               AutomationProperties.AutomationId="{Binding Exe, StringFormat='status:{0}'}" />
+                    <TextBlock Text="&#xE7BA;" FontFamily="{StaticResource IconFont}" HorizontalAlignment="Right" VerticalAlignment="Top"
+                               Foreground="{StaticResource Critical}" ToolTip="一部のセッションを操作できませんでした"
+                               Visibility="{Binding WriteFailed, Converter={StaticResource BoolToVisibility}}" />
+                </Grid>
+            </Button>
+        </DataTemplate>
+
+        <!-- ゲーミング: 暗い地にアクセントの色の縁。ミュートのある行は赤く光る(光は止まった絵で、動かさない) -->
+        <DataTemplate x:Key="Row.gaming">
+            <Grid Margin="6,6,6,8" Visibility="{Binding Shown, Converter={StaticResource BoolToVisibility}}">
+                <Border CornerRadius="3" Background="#FF3B5C"
+                        Visibility="{Binding HasMute, Converter={StaticResource BoolToVisibility}}">
+                    <Border.Effect>
+                        <DropShadowEffect Color="#FF3B5C" BlurRadius="16" ShadowDepth="0" Opacity="0.9" />
+                    </Border.Effect>
+                </Border>
+                <Border Background="{StaticResource GamingCard}" BorderThickness="1" CornerRadius="3" Padding="12,10">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="BorderBrush" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding HasMute}" Value="True">
+                                    <Setter Property="BorderBrush" Value="#FF3B5C" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Grid Width="30" Height="30" Margin="0,0,12,0" VerticalAlignment="Center" Visibility="{DynamicResource RowIconVisibility}">
+                            <TextBlock Style="{StaticResource IconPlaceholder}" />
+                            <Image Source="{Binding Icon}" RenderOptions.BitmapScalingMode="HighQuality" />
+                        </Grid>
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding Exe}" ToolTip="{Binding Exe}" FontFamily="Bahnschrift" FontSize="15" FontWeight="SemiBold"
+                                       Foreground="#F2F2FF" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Status}" Foreground="{Binding StatusBrush}" Margin="0,2,0,0"
+                                       Visibility="{DynamicResource RowStatusVisibility}"
+                                       AutomationProperties.AutomationId="{Binding Exe, StringFormat='status:{0}'}" />
+                            <TextBlock Text="一部のセッションを操作できませんでした" TextWrapping="Wrap" Margin="0,2,0,0"
+                                       Foreground="{StaticResource Critical}"
+                                       Visibility="{Binding WriteFailed, Converter={StaticResource BoolToVisibility}}" />
+                        </StackPanel>
+                        <Button Grid.Column="2" Click="OnToggle"
+                                AutomationProperties.Name="{Binding ButtonText}"
+                                AutomationProperties.AutomationId="{Binding Exe, StringFormat='toggle:{0}'}"
+                                MinWidth="104" Margin="8,0,0,0" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding ButtonGlyph}" FontFamily="{StaticResource IconFont}" FontSize="14"
+                                           VerticalAlignment="Center" Margin="0,1,6,0" />
+                                <TextBlock Text="{Binding ButtonText}" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button Grid.Column="3" Content="&#xE74D;" Click="OnRemove" Visibility="{DynamicResource RowRemoveVisibility}"
+                                FontFamily="{StaticResource IconFont}" FontSize="14" Padding="8"
+                                ToolTip="一覧から削除" AutomationProperties.Name="削除"
+                                AutomationProperties.AutomationId="{Binding Exe, StringFormat='remove:{0}'}"
+                                Margin="6,0,0,0" VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+            </Grid>
+        </DataTemplate>
+    </Window.Resources>
+
+    <DockPanel x:Name="Root" Margin="12">
         <Border x:Name="ErrorBand" DockPanel.Dock="Top" Visibility="Collapsed"
-                Background="#C42B1C" CornerRadius="4" Padding="10,6" Margin="0,0,0,8">
+                Background="#C42B1C" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
             <TextBlock x:Name="ErrorText" Foreground="White" TextWrapping="Wrap" />
         </Border>
 
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <Button DockPanel.Dock="Right" Content="&#xE713;" Click="OnSettings"
+                    FontFamily="{StaticResource IconFont}" FontSize="16" Padding="8" Margin="6,0,0,0"
+                    ToolTip="設定" AutomationProperties.Name="設定" AutomationProperties.AutomationId="settings" />
+            <ToggleButton x:Name="TopCheck" DockPanel.Dock="Right" Content="&#xE718;" Click="OnTopClick"
+                          FontFamily="{StaticResource IconFont}" FontSize="16" Padding="8"
+                          ToolTip="常に手前に表示" AutomationProperties.Name="常に手前に表示" AutomationProperties.AutomationId="top" />
+            <TextBlock x:Name="Summary" VerticalAlignment="Center" Opacity="0.7" TextTrimming="CharacterEllipsis"
+                       Visibility="{DynamicResource SummaryVisibility}" AutomationProperties.AutomationId="summary" />
+        </DockPanel>
+
         <Button x:Name="AllButton" DockPanel.Dock="Top" Content="すべてミュート" Click="OnToggleAll"
+                Style="{DynamicResource AccentButtonStyle}"
                 AutomationProperties.AutomationId="all" IsEnabled="False"
-                HorizontalAlignment="Stretch" Padding="0,8" Margin="0,0,0,8" />
+                HorizontalAlignment="Stretch" Padding="0,9" Margin="0,0,0,10" />
 
         <TextBlock x:Name="Notice" DockPanel.Dock="Bottom" Visibility="Collapsed"
                    AutomationProperties.AutomationId="notice" TextWrapping="Wrap" Margin="0,8,0,0" />
 
         <Button x:Name="AddButton" DockPanel.Dock="Bottom" Content="アプリを追加…" Click="OnAdd"
                 AutomationProperties.AutomationId="add" IsEnabled="False"
-                HorizontalAlignment="Stretch" Padding="0,6" Margin="0,8,0,0" />
+                HorizontalAlignment="Stretch" Padding="0,7" Margin="0,6,0,0" />
 
         <Grid>
             <TextBlock x:Name="Placeholder" Text="読み込み中…" Opacity="0.7"
                        AutomationProperties.AutomationId="placeholder"
                        HorizontalAlignment="Center" VerticalAlignment="Center" />
             <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <ItemsControl x:Name="List">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Grid Margin="0,6">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding Exe}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{Binding Status}" Opacity="0.7"
-                                               AutomationProperties.AutomationId="{Binding Exe, StringFormat='status:{0}'}" />
-                                    <TextBlock Text="一部のセッションを操作できませんでした" Foreground="#C42B1C" TextWrapping="Wrap"
-                                               Visibility="{Binding WriteFailed, Converter={StaticResource BoolToVisibility}}" />
-                                </StackPanel>
-                                <Button Grid.Column="1" Content="{Binding ButtonText}" Click="OnToggle"
-                                        AutomationProperties.AutomationId="{Binding Exe, StringFormat='toggle:{0}'}"
-                                        MinWidth="88" Margin="8,0,0,0" VerticalAlignment="Center" />
-                                <Button Grid.Column="2" Content="削除" Click="OnRemove"
-                                        AutomationProperties.AutomationId="{Binding Exe, StringFormat='remove:{0}'}"
-                                        Margin="6,0,0,0" VerticalAlignment="Center" />
-                            </Grid>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
+                <!-- 右クリックのメニューは OnRowMenu が開くたびに組む(削除・カテゴリー) -->
+                <ItemsControl x:Name="List" ItemTemplate="{StaticResource Row.standard}" ContextMenuOpening="OnRowMenu">
+                    <ItemsControl.ContextMenu>
+                        <ContextMenu />
+                    </ItemsControl.ContextMenu>
+                    <!-- カテゴリーの見出し。グループ分けは、振り分けたアプリが 1 つでもあるときだけ有効になる -->
+                    <ItemsControl.GroupStyle>
+                        <GroupStyle HeaderTemplate="{StaticResource CategoryHeader}" />
+                    </ItemsControl.GroupStyle>
                 </ItemsControl>
             </ScrollViewer>
         </Grid>

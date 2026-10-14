@@ -2,7 +2,7 @@
 <Window x:Class="HushSwitch.AddDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="アプリを追加" Width="340" Height="420" ResizeMode="NoResize"
+        Title="アプリを追加" Width="360" Height="440" ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
     <DockPanel Margin="12">
         <TextBlock DockPanel.Dock="Top" Text="音を出しているアプリ" Margin="0,0,0,6" />
@@ -31,6 +31,17 @@
                     </Style.Triggers>
                 </Style>
             </ListBox.ItemContainerStyle>
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <StackPanel Orientation="Horizontal">
+                        <Grid Width="24" Height="24" Margin="0,0,10,0">
+                            <TextBlock Style="{StaticResource IconPlaceholder}" FontSize="18" />
+                            <Image Source="{Binding Icon}" RenderOptions.BitmapScalingMode="HighQuality" />
+                        </Grid>
+                        <TextBlock Text="{Binding Exe}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
         </ListBox>
     </DockPanel>
 </Window>

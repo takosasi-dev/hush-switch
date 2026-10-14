@@ -137,6 +137,9 @@ public sealed class AudioSessionService(EventLog? log = null) : IAudioSessions
         Unwatch(id => codes.Count > 0 || !active.Contains(id));
         if (deviceCount > 0 && codes.Count == deviceCount && lost)
             throw new AudioUnavailableException(codes[0]);
+        // オーディオサービスを止めると、列挙は例外にならず、有効なデバイスが 0 個で返る(実機のログで確認)
+        // ponytail: 有効なデバイスが本当に 1 つも無い PC でも同じ表示になる。区別が要るならサービスの状態を見る
+        if (deviceCount == 0) throw new AudioUnavailableException("no_devices");
 
         if (known != null && !known.SetEquals(active))
             log?.Write("device_changed", "sync", reason: $"devices {known.Count} -> {active.Count}");
